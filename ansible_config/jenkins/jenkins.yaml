@@ -1,0 +1,171 @@
+---
+##########################
+# Playbook: Jenkins Setup
+##########################
+
+- name: Install and configure Jenkins
+  hosts: jenkins
+  become: true
+
+  tasks:
+    - name: Add Jenkins APT key
+      apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+        state: present
+
+    - name: Add Jenkins APT repository
+      apt_repository:
+        repo: deb https://pkg.jenkins.io/debian-stable binary/
+        state: present
+
+    - name: Install Java (OpenJDK 17)
+      apt:
+        name: openjdk-17-jre
+        state: present
+
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        update_cache: yes
+        state: present
+
+    - name: Reload systemd to pick up Jenkins service
+      command: systemctl daemon-reexec
+
+    - name: Enable Jenkins service to start on boot
+      systemd:
+        name: jenkins
+        enabled: true
+
+    - name: Start Jenkins service
+      systemd:
+        name: jenkins
+        state: started
+
+    - name: Validate Jenkins is active
+      command: systemctl is-active jenkins
+      register: jenkins_status
+      changed_when: false
+
+    - name: Show Jenkins service status
+      debug:
+        msg: "Jenkins is {{ jenkins_status.stdout }}"
+
+##########################
+# Playbook: Helm Setup
+##########################
+
+- name: Install Helm and Datree plugin
+  hosts: jenkins
+  become: true
+
+  tasks:
+    - name: Check if Helm is installed
+      command: helm version
+      register: helm_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Download Helm install script
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0755'
+      when: helm_check.rc != 0
+
+    - name: Run Helm install script
+      command: /tmp/get_helm.sh
+      when: helm_check.rc != 0
+
+    - name: Ensure unzip is installed
+      apt:
+        name: unzip
+        state: present
+
+    - name: Check if Datree plugin is already installed
+      command: helm plugin list
+      register: datree_plugin_list
+      changed_when: false
+
+    - name: Install Datree Helm plugin
+      command: helm plugin install https://github.com/datreeio/helm-datree
+      when: "'datree' not in datree_plugin_list.stdout"
+
+    - name: Validate Helm installation
+      command: helm version
+      register: helm_version
+      changed_when: false
+
+    - name: Show Helm version
+      debug:
+        msg: "{{ helm_version.stdout }}"
+
+##########################
+# Playbook: Docker Setup
+##########################
+
+- name: Install Docker and validate setup
+  hosts: jenkins
+  become: true
+
+  tasks:
+    - name: Install prerequisite packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker APT repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker CE
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        update_cache: yes
+        state: present
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add Jenkins user to docker group
+      user:
+        name: jenkins
+        groups: docker
+        append: yes
+
+    - name: Validate Docker installation
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Show Docker version
+      debug:
+        msg: "{{ docker_version.stdout }}"
+
+    - name: Run hello-world container (test)
+      command: docker run --rm hello-world
+      register: docker_hello
+      changed_when: false
+      ignore_errors: true  # just in case image not present
+
+    - name: Show hello-world output
+      debug:
+        msg: "{{ docker_hello.stdout }}"
+

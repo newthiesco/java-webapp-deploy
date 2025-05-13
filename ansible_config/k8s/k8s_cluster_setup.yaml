@@ -1,0 +1,134 @@
+---
+##### PLAY 1: Add private IPs of k8s-master and k8s-node1 to scripts #####
+- name: Add private IP of k8s instances to init scripts
+  hosts: localhost
+  tasks:
+    - name: Run add_k8s_ip.sh
+      shell: ./add_k8s_ip.sh
+
+##### PLAY 2: Setup and configure Kubernetes Control Plane (Master) #####
+- name: Setup Kubernetes Control Plane (Master) Node
+  hosts: k8s-master
+  become: true
+  tasks:
+    - name: Copy master.sh script to k8s control plane node
+      copy:
+        src: master.sh
+        dest: /root/master.sh
+        mode: '0755'
+
+    - name: Configure Control Plane (master) node
+      shell: /root/master.sh
+
+    - name: Get kubeadm join command
+      shell: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: Extract join command from kubeadm output
+      set_fact:
+        token_result: "{{ join_command.stdout | regex_search('kubeadm join .* --token \\S+ --discovery-token-ca-cert-hash \\S+', '\\0') }}"
+
+    - name: Create join_cluster.sh
+      copy:
+        content: "{{ token_result }}"
+        dest: join_cluster.sh
+      delegate_to: localhost
+
+    - name: Create kubectl alias for root
+      lineinfile:
+        path: /root/.bashrc
+        line: "alias k=kubectl"
+        regexp: '^alias k='
+        state: present
+
+##### PLAY 3: Configure kubectl for Ubuntu user on Control Plane #####
+- name: Configure kubectl for ubuntu user
+  hosts: k8s-master
+  become: true
+  tasks:
+    - name: Create .kube directory for ubuntu user
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy admin.conf to ubuntu's .kube directory
+      copy:
+        remote_src: true
+        src: /etc/kubernetes/admin.conf
+        dest: /home/ubuntu/.kube/config
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Create kubectl alias for ubuntu
+      lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: "alias k=kubectl"
+        regexp: '^alias k='
+        state: present
+
+##### PLAY 4: Setup and configure Kubernetes Worker Nodes #####
+- name: Setup Kubernetes Worker Node
+  hosts: k8s-node1
+  become: true
+  tasks:
+    - name: Copy nodes.sh script to worker node
+      copy:
+        src: nodes.sh
+        dest: /root/nodes.sh
+        mode: '0755'
+
+    - name: Configure Worker node
+      shell: /root/nodes.sh
+
+    - name: Copy join_cluster.sh from localhost to worker node
+      copy:
+        src: join_cluster.sh
+        dest: /root/join_cluster.sh
+        mode: '0755'
+
+    - name: Join the Kubernetes cluster
+      shell: /root/join_cluster.sh
+
+##### PLAY 5: Copy kubeconfig from k8s-master node to localhost #####
+- name: Copy the kubeconfig from k8s-master
+  hosts: k8s-master
+  become: true
+  tasks:
+    - name: Fetch kubeconfig file to localhost
+      run_once: true
+      fetch:
+        src: /root/.kube/config
+        dest: buffer/
+        flat: true
+
+##### PLAY 6: Install kubectl and setup Jenkins user's kubeconfig #####
+- name: Jenkins User kubectl Setup
+  hosts: jenkins
+  become: true
+  tasks:
+    - name: Install kubectl using snap
+      snap:
+        name: kubectl
+        classic: true
+        state: present
+
+    - name: Create .kube directory for jenkins user
+      file:
+        path: /var/lib/jenkins/.kube
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
+
+    - name: Copy kubeconfig from localhost to Jenkins server
+      copy:
+        src: buffer/config
+        dest: /var/lib/jenkins/.kube/config
+        mode: '0600'
+        owner: jenkins
+        group: jenkins
+
