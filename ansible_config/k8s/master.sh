@@ -4,113 +4,73 @@
 printf "\n172.31.27.73 k8s-master\n172.31.24.156 k8s-node1\n\n" >> /etc/hosts
 
 # Disable swap
-swapoff -a
-sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+# swapoff -a
+# sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-# Install containerd
-wget https://github.com/containerd/containerd/releases/download/v1.6.16/containerd-1.6.16-linux-amd64.tar.gz
-tar -xzvf containerd-1.6.16-linux-amd64.tar.gz -C /usr/local
-wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
-mkdir -p /usr/local/lib/systemd/system
-mv containerd.service /usr/local/lib/systemd/system/containerd.service
-systemctl daemon-reload
-systemctl enable --now containerd
+# 1. Update 
+sudo apt update && sudo apt upgrade -y
 
-# Install runc
-wget https://github.com/opencontainers/runc/releases/download/v1.1.4/runc.amd64
-install -m 755 runc.amd64 /usr/local/sbin/runc
-
-# Install CNI plugins
-wget https://github.com/containernetworking/plugins/releases/download/v1.2.0/cni-plugins-linux-amd64-v1.2.0.tgz
-mkdir -p /opt/cni/bin
-tar -xzvf cni-plugins-linux-amd64-v1.2.0.tgz -C /opt/cni/bin
-
-# Install crictl
-VERSION="v1.26.0"  # Check latest version in /releases page
-wget https://github.com/kubernetes-sigs/cri-tools/releases/download/$VERSION/crictl-$VERSION-linux-amd64.tar.gz
-tar -xzvf crictl-$VERSION-linux-amd64.tar.gz -C /usr/local/bin
-rm -f crictl-$VERSION-linux-amd64.tar.gz
-
-# Create crictl config file
-cat <<EOF | tee /etc/crictl.yaml
-runtime-endpoint: unix:///run/containerd/containerd.sock
-image-endpoint: unix:///run/containerd/containerd.sock
-timeout: 2
-debug: false
-pull-image-on-create: false
-EOF
-
-# Load kernel modules
-cat <<EOF | tee /etc/modules-load.d/k8s.conf
+# 2. Disable Swap (required by kubelet)
+sudo swapoff -a
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+ 
+# 3. Load required kernel modules
+cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
 overlay
 br_netfilter
 EOF
-modprobe overlay
-modprobe br_netfilter
 
-# Set sysctl parameters for Kubernetes networking
-cat <<EOF | tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-iptables = 1
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# 4. Set sysctl parameters
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward = 1
+net.ipv4.ip_forward                 = 1
 EOF
-sysctl --system &> /home/ubuntu/sysctl-output.txt
-sysctl net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
-modprobe br_netfilter
-sysctl -p /etc/sysctl.conf
 
-# # # Add Kubernetes APT repository and install kubectl, kubeadm, kubelet
+sudo sysctl --system
+________________________________________
+🐳 Step 2: Install containerd
+# 1. Install containerd dependencies
+sudo apt install -y curl gnupg2 software-properties-common apt-transport-https ca-certificates
 
+# 2. Add Docker GPG key and repo
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 3. Install containerd
+sudo apt update && sudo apt install -y containerd.io
+
+# 4. Generate default config
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
+
+# 5. Enable systemd cgroup driver
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+# 6. Restart containerd
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+________________________________________
+☸️ Step 3: Install Kubernetes
+# 1. Add Kubernetes GPG key and repo
 sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v$KUBERNETES_VERSION/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$KUBERNETES_VERSION/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-sudo apt-get update -y
-apt-cache madison kubeadm | tac
-sudo apt-get install -y kubelet=1.30.0-1.1 kubectl=1.30.0-1.1 kubeadm=1.30.0-1.1
-sudo apt-get install -y kubelet kubeadm kubectl
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" | \
+sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+# 2. Install kubeadm, kubelet, kubectl
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 
-# sudo apt-get update && sudo apt-get upgrade -y
-# # apt-get update -y && apt-get install -y apt-transport-https curl
-# sudo apt-get update && sudo apt-get install -y apt-transport-https curl
-# # curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
-# curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-
-# # cat <<EOF | tee /etc/apt/sources.list.d/kubernetes.list
-# # deb https://apt.kubernetes.io/ kubernetes-xenial main
-# # EOF
-# cat <<EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
-# deb https://apt.kubernetes.io/ kubernetes-xenial main
-# EOF
-
-# apt update -y
-# apt-get install -y kubelet kubeadm kubectl
-
-# # Verify Kubernetes installation
-# kubeadm version
-# kubectl version --client
-
-# # Mark Kubernetes packages to be held
-# apt-mark hold kubelet kubeadm kubectl
-
-# sudo apt-get update && sudo apt-get upgrade -y
-# apt-get update && sudo apt-get install -y apt-transport-https curl
-# curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-# apt-get install -y apt-transport-https ca-certificates curl gpg
-# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg - dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-# apt-get install gpg
-# mkdir -p -m 755 /etc/apt/keyrings
-# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-# echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-# cat <<EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
-# deb https://apt.kubernetes.io/ kubernetes-xenial main
-# EOF
-# sudo apt-get update
-# sudo apt-get install -y kubelet kubeadm kubectl
-# apt-mark hold kubelet kubeadm kubectl
-
-
-
+sudo kubeadm init --pod-network-cidr=192.168.0.0/16
 
 # Initialize Kubernetes master node
 kubeadm init
@@ -127,8 +87,8 @@ else
 fi
 sleep 10
 
-# Install Weave CNI
-kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+# Install Calico CNI
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml
 
 # Wait for pods and nodes
 kubectl get pods -n kube-system --watch
