@@ -5,7 +5,7 @@ set -euo pipefail
 # Update /etc/hosts with k8s IPs
 cat <<EOF >> /etc/hosts
 
-172.31.27.73 k8s-master
+172.31.20.26 k8s-master
 172.31.24.156 k8s-node1
 
 EOF

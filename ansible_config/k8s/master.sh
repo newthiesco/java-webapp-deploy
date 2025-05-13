@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Update /etc/hosts
-printf "\n172.31.27.73 k8s-master\n172.31.24.156 k8s-node1\n\n" >> /etc/hosts
+printf "\n172.31.20.26 k8s-master\n172.31.24.156 k8s-node1\n\n" >> /etc/hosts
 
 # Disable swap
 # swapoff -a
@@ -70,7 +70,7 @@ sudo apt update
 sudo apt install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 
-sudo kubeadm init --pod-network-cidr=192.168.0.0/16
+sudo kubeadm init --pod-network-cidr=172.31.21.75/16
 
 # Initialize Kubernetes master node
 kubeadm init
