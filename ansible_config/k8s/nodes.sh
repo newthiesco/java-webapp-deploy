@@ -40,7 +40,7 @@ EOF
 
 sudo sysctl --system
 ________________________________________
-🐳 Step 2: Install containerd
+#🐳 Step 2: Install containerd
 # 1. Install containerd dependencies
 sudo apt install -y curl gnupg2 software-properties-common apt-transport-https ca-certificates
 
@@ -64,7 +64,7 @@ sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/conf
 sudo systemctl restart containerd
 sudo systemctl enable containerd
 ________________________________________
-☸️ Step 3: Install Kubernetes
+#☸️ Step 3: Install Kubernetes
 # 1. Add Kubernetes GPG key and repo
 sudo mkdir -p /etc/apt/keyrings
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
